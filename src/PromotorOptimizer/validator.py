@@ -1,14 +1,19 @@
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+import re
 
 
 class SequenceValidator:
     """
-    Build a composite, callable sequence validator from a configuration.
+    Build an optimized, composite, callable sequence validator from a configuration.
 
-    The class constructs small validator functions (homopolymer, GC-content,
-    length) and composes them into a single callable object that accepts a
-    list of sequences and returns per-sequence dictionaries with boolean
-    results for each check and an overall `valid` flag.
+    The class processes a batch of sequences using a cascading short-circuit pipeline.
+    It filters out invalid sequences on the fly, ensuring that expensive operations
+    (like regex-based homopolymer searching) are only executed on sequences that passed
+    cheaper, prior checks (like length and GC content).
+
+    :param config: Configuration dictionary for the validator benchmarks.
+    :type config: dict, optional
+
 
     Configuration options (keys in `config`):
         - max_homopolymer_at (int|None): max consecutive A/T allowed
@@ -17,10 +22,34 @@ class SequenceValidator:
         - max_length (int|None): maximum allowed sequence length
         - min_length (int|None): minimum allowed sequence length
 
-    The instance itself is callable: `validator(list_of_seqs) -> list[dict]`.
+    Example:
+        >>> config = {
+        ...     "max_homopolymer_at": 5,
+        ...     "max_homopolymer_gc": 4,
+        ...     "gc_percent_range": (0.4, 0.6),
+        ...     "min_length": 10,
+        ...     "max_length": 100
+        ... }
+        >>> validator = SequenceValidator(config)
+        >>> promoter_fragments = [
+        ...     "ATCGATCGATCGATCGATCG",  # Valid sequence
+        ...     "AAAAAAATCGATCGATCG",    # Invalid: Homopolymer AT (7x'A')
+        ...     "CGCGCGCGCGCG",           # Invalid: Out of GC range
+        ...     "ATCG",                   # Invalid: Too short
+        ... ]
+        >>> results = validator(promoter_fragments)
+        >>> print(results)
+        [True, False, False, False]
     """
 
     def __init__(self, config: Optional[Dict] = None):
+        """
+        Initialize the validator with optimized batch settings and pre-compiled regex patterns.
+
+        :param config: Dictionary containing configuration thresholds
+        """
+
+
         config = config or {}
         self.max_homopolymer_at = config.get("max_homopolymer_at")
         self.max_homopolymer_gc = config.get("max_homopolymer_gc")
@@ -28,76 +57,112 @@ class SequenceValidator:
         self.max_length = config.get("max_length")
         self.min_length = config.get("min_length")
 
-        # Build list of check callables; each returns tuple(key, bool)
-        self.checks: List[Callable[[str], Tuple[str, bool]]] = []
+        # Pre-compile regex patterns to execute sub-string searching directly in C.
+        # Including both upper and lower case variants avoids expensive string allocation via .upper()
+        self.at_pattern = (
+            re.compile(f"[ATat]{{{self.max_homopolymer_at + 1}}}")
+            if self.max_homopolymer_at is not None
+            else None
+        )
+        self.gc_pattern = (
+            re.compile(f"[GCgc]{{{self.max_homopolymer_gc + 1}}}")
+            if self.max_homopolymer_gc is not None
+            else None
+        )
 
-        if self.max_homopolymer_at is not None:
-            self.checks.append(self._make_homopolymer_check("homopolymer_at", "AT", self.max_homopolymer_at))
-        if self.max_homopolymer_gc is not None:
-            self.checks.append(self._make_homopolymer_check("homopolymer_gc", "GC", self.max_homopolymer_gc))
-        if self.gc_percent_range is not None:
-            self.checks.append(self._make_gc_check("gc_content", self.gc_percent_range))
-        if self.max_length is not None or self.min_length is not None:
-            self.checks.append(self._make_length_check("length", self.min_length, self.max_length))
+    def __call__(self, sequences: List[str]) -> List[bool]:
+        """
+        Validate a list of sequences sequentially by narrowing down active indices.
 
-    # Factory methods return functions that evaluate single sequences and return (key, bool)
-    def _make_homopolymer_check(self, key: str, bases: str, max_len: int) -> Callable[[str], Tuple[str, bool]]:
-        def check(seq: str) -> Tuple[str, bool]:
-            seq = seq.upper()
-            current = 0
-            for c in seq:
-                if c in bases:
-                    current += 1
-                    if current > max_len:
-                        return key, False
+        Each step evaluates only the sequences that survived the previous check.
+        Failed sequences are marked False immediately and skipped in subsequent steps.
+
+        :param sequences: List of DNA sequence strings to validate
+        :type sequences: list[str]
+        :return: List of booleans matching the input length, where True means the sequence is valid
+        :rtype: list[bool]
+        """
+        if not sequences:
+            return []
+
+        # Initialize the global status row for all input elements
+        is_valid = [True] * len(sequences)
+        
+        # Track only the indices of sequences that are still valid
+        active_indices = list(range(len(sequences)))
+
+        # --- STEP 1: Length Check  ---
+        if (self.min_length is not None or self.max_length is not None) and active_indices:
+            next_active = []
+            min_l, max_l = self.min_length, self.max_length
+            for idx in active_indices:
+                seq_len = len(sequences[idx])
+                if (min_l is not None and seq_len < min_l) or (max_l is not None and seq_len > max_l):
+                    is_valid[idx] = False
                 else:
-                    current = 0
-            return key, True
-        return check
+                    next_active.append(idx)
+            active_indices = next_active  # Fold to survivors
 
-    def _make_gc_check(self, key: str, gc_range: Tuple[float, float]) -> Callable[[str], Tuple[str, bool]]:
-        def check(seq: str) -> Tuple[str, bool]:
-            seq = seq.upper()
-            if len(seq) == 0:
-                return key, False
-            gc = seq.count("G") + seq.count("C")
-            frac = gc / len(seq)
-            return key, (gc_range[0] <= frac <= gc_range[1])
-        return check
+        # --- STEP 2: GC Content Check ---
+        if (self.gc_percent_range is not None) and active_indices:
+            next_active = []
+            gc_min, gc_max = self.gc_percent_range
+            for idx in active_indices:
+                seq = sequences[idx]
+                seq_len = len(seq)
+                
+                # C-level native counting, avoids allocating new strings via .upper()
+                gc_count = seq.count('G') + seq.count('C') + seq.count('g') + seq.count('c')
+                frac = gc_count / seq_len if seq_len > 0 else 0.0
+                
+                if not (gc_min <= frac <= gc_max):
+                    is_valid[idx] = False
+                else:
+                    next_active.append(idx)
+            active_indices = next_active  # Fold to survivors
 
-    def _make_length_check(self, key: str, min_len: Optional[int], max_len: Optional[int]) -> Callable[[str], Tuple[str, bool]]:
-        def check(seq: str) -> Tuple[str, bool]:
-            l = len(seq)
-            if min_len is not None and l < min_len:
-                return key, False
-            if max_len is not None and l > max_len:
-                return key, False
-            return key, True
-        return check
+        # --- STEP 3: Homopolymer AT Check (Regex) ---
+        if (self.at_pattern is not None) and active_indices:
+            next_active = []
+            search_at = self.at_pattern.search
+            for idx in active_indices:
+                if search_at(sequences[idx]):
+                    is_valid[idx] = False
+                else:
+                    next_active.append(idx)
+            active_indices = next_active  # Fold to survivors
 
-    def __call__(self, sequences: List[str]) -> List[Dict[str, bool]]:
-        """
-        Validate a list of sequences.
+        # --- STEP 4: Homopolymer GC Check  ---
+        if (self.gc_pattern is not None) and active_indices:
+            search_gc = self.gc_pattern.search
+            for idx in active_indices:
+                if search_gc(sequences[idx]):
+                    is_valid[idx] = False
 
-        :param sequences: list of DNA sequence strings
-        :return: list of dicts, each with keys for each check and `valid` boolean
-        """
-        results: List[Dict[str, bool]] = []
-        # If no checks configured, return permissive results
-        if not self.checks:
-            for _ in sequences:
-                results.append({
-                    "valid": True
-                })
-            return results
+        return is_valid
 
-        for seq in sequences:
-            seq_result: Dict[str, bool] = {}
-            for check in self.checks:
-                key, ok = check(seq)
-                seq_result[key] = ok
-            # overall validity
-            seq_result["valid"] = all(v for v in seq_result.values())
-            results.append(seq_result)
+# FOR DEBUGGING / EXAMPLE
+if __name__ == "__main__":
+    # Complete parameter pipeline setup
+    config = {
+        "max_homopolymer_at": 5,
+        "max_homopolymer_gc": 4,
+        "gc_percent_range": (0.4, 0.6),
+        "min_length": 10,
+        "max_length": 50
+    }
 
-        return results
+    validator = SequenceValidator(config)
+
+    # Mock dataset containing various edge-case failures
+    promoter_fragments = [
+        "ATCGATCGATCGATCGATCG",  # Valid (Length: 20, GC: 50%, No long homopolymers)
+        "AAAAAAATCGATCGATCG",    # Invalid: Fails Homopolymer AT (7x 'A')
+        "CGCGCGCGCGCG",           # Invalid: Fails GC Content (100% GC)
+        "ATCG",                   # Invalid: Fails Length (Too short)
+    ]
+
+    # Execute batch pipeline directly
+    results = validator(promoter_fragments)
+    print("Validation mapping:", results)
+    # Output: [True, False, False, False]
