@@ -1,0 +1,85 @@
+{
+    "sample_name": "batch_run",
+    "original_sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTAAGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+    "task_mode": "unconstrained_design",
+    "best_sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTACGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+    "best_score": -0.5729007124900818,
+    "optimization_history": [
+        {
+            "sample_name": "seq_4_no_active",
+            "sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTAAGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+            "ensemble_score": -0.6862285137176514,
+            "scores": {
+                "scheduler_plateau": -0.6862285137176514
+            },
+            "is_valid": true
+        },
+        {
+            "sample_name": "seq_4_no_active",
+            "sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTAAGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACAAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+            "ensemble_score": -0.6580899357795715,
+            "scores": {
+                "scheduler_plateau": -0.6580899357795715
+            },
+            "is_valid": true
+        },
+        {
+            "sample_name": "seq_4_no_active",
+            "sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCATTGGTCTTCCTAAGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+            "ensemble_score": -0.5841115713119507,
+            "scores": {
+                "scheduler_plateau": -0.5841115713119507
+            },
+            "is_valid": true
+        },
+        {
+            "sample_name": "seq_4_no_active",
+            "sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTAAGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGATTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+            "ensemble_score": -0.6446627974510193,
+            "scores": {
+                "scheduler_plateau": -0.6446627974510193
+            },
+            "is_valid": true
+        },
+        {
+            "sample_name": "seq_4_no_active",
+            "sequence": "TCGGTTCACGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTACGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+            "ensemble_score": -0.5729007124900818,
+            "scores": {
+                "scheduler_plateau": -0.5729007124900818
+            },
+            "is_valid": true
+        },
+        {
+            "sample_name": "seq_4_no_active",
+            "sequence": "TCGGTTCCCGCAATGTGAAGGATTGGTTATTTATTCCATGCTTTACTCTCTGGCTTCTTTGGTCTTCCTAAGGTACGTTTACTTAGATAACTGCCTCCTTTTCATCACTAGATGGTGCCATAAACCCAGCTTCGTTCAGCTCTTGCAAAGATTTGGAGCACTGTTTGTCTCAAATTGGGGAGGAGGTCTTAAAGGAGACACCCCAACAATGTTGAAGTTGATCCGGTCCT",
+            "ensemble_score": -0.5978826284408569,
+            "scores": {
+                "scheduler_plateau": -0.5978826284408569
+            },
+            "is_valid": true
+        }
+    ],
+    "interpretations": null,
+    "metadata": {
+        "config": {
+            "input_path": "data/sequences.tsv",
+            "output_path": "test.json",
+            "task_mode": "unconstrained_design",
+            "mutation_budget": null,
+            "iterations": 4000,
+            "models": [
+                "scheduler_plateau"
+            ],
+            "optimizers": [
+                "mutation"
+            ],
+            "interpreters": [
+                "saliency"
+            ],
+            "ensemble": true,
+            "validation_config": null,
+            "seed": 42
+        }
+    }
+}
