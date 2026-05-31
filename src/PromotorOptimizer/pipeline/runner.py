@@ -1,7 +1,9 @@
 # pipeline/runner.py
 
 import json
+import os
 import pandas as pd
+from typing import Literal
 
 from ..models.model_manager import ModelManager
 from ..models.registry import ModelRegistry
@@ -10,10 +12,6 @@ from ..interpretation.registry import InterpreterRegistry
 
 from ..core.wrapper import SequencePredictorModelWrapper
 from .configs import PipelineConfig
-
-from ..core.types import ExperimentResult
-from .experiment_tracker import ExperimentTracker
-from .exporters import ExperimentExporter
 
 
 class PipelineRunner:
@@ -42,13 +40,47 @@ class PipelineRunner:
         print(f"[INFO] Loading interpreters: {config.interpreters}")
         self.interpreters = InterpreterRegistry.load(config.interpreters)
 
-        # 4. WRAPPER
+        # 4. LOAD INPUT SEQUENCES
+        print(f"[INFO] Reading input file: {self.config.input_path}")
+
+        df = pd.read_csv(
+            self.config.input_path,
+            sep=r"\s+",
+            header=None,
+            names=["id", "sequence"]
+        )
+        print("input df")
+        print(df)
+
+        self.sequences = {
+            row["id"]: row["sequence"]
+            for _, row in df.iterrows()
+        }
+
+        print(f"[INFO] Loaded {len(self.sequences)} sequences")
+
+        # 5. MODEL TYPE
+        self.model_type: Literal["single", "ensemble"] = (
+            "single" if len(config.models) == 1 else "ensemble"
+        )
+
+        # 6. MODE
+        self.mode: Literal["optimization", "reconstruction"] = (
+            "reconstruction"
+            if config.task_mode == "constrained_recovery"
+            else "optimization"
+        )
+
+        # 7. WRAPPER
         print("[INFO] Building wrapper")
 
         self.wrapper = SequencePredictorModelWrapper(
+            model_type=self.model_type,
+            mode=self.mode,
+            sequences=self.sequences,
             model_manager=self.model_manager,
             optimizers_list=self.optimizers,
-            validation_config=config.validation_config
+            interpreters_list=self.interpreters
         )
 
         print("[INFO] Pipeline initialized successfully")
@@ -58,87 +90,52 @@ class PipelineRunner:
     # -------------------------
     def run(self):
 
-        print(f"\n[INFO] Reading input file: {self.config.input_path}")
-        df = pd.read_csv(
-            self.config.input_path,
-            sep=r"\s+",
-            header=None,
-            names=["id", "sequence"]
-        )
+        print(f"\n[INFO] Task mode: {self.config.task_mode}")
 
-        print(f"[INFO] Loaded {len(df)} sequences")
+        if self.config.task_mode == "constrained_recovery":
 
-        sequences = {
-            row["id"]: row["sequence"]
-            for _, row in df.iterrows()
-        }
+            print("[INFO] Running reconstruction pipeline")
 
-        results = {}
+            results = self.wrapper.ReconstructSequences(
+                mutation_n=self.config.mutation_budget,
+                org_expression=None,
+                reconstruction_config={
+                    "iterations": self.config.iterations
+                }
+            )
 
-        print(f"[INFO] Task mode: {self.config.task_mode}")
+        else:
 
-        for name, seq in sequences.items():
+            print("[INFO] Running optimization pipeline")
 
-            print(f"\n[INFO] Processing: {name}")
-            print(f"[INFO] Sequence length: {len(seq)}")
+            results = self.wrapper.OptimizeSequences(
+                config={
+                    "iterations": self.config.iterations
+                }
+            )
 
-            if self.config.task_mode == "constrained_recovery":
-                output = self.wrapper.ReconstructSequence(
-                    {name: seq},
-                    mutation_n=self.config.mutation_budget
-                )
-            else:
-                output = self.wrapper.OptimizeSequence(
-                    {name: seq},
-                    config={"iterations": self.config.iterations}
-                )
+        # -------------------------
+        # SAVE RESULTS
+        # -------------------------
+        self._save_results(results)
 
-            results[name] = output
-
-        # -------------------------------------------------
-        # FLATTEN RESULTS (IMPORTANT FIX)
-        # -------------------------------------------------
-        all_rows = []
-
-        best_sequence = None
-        best_score = float("-inf")
-
-        for sample_name, table in results.items():
-            for row in table[sample_name]:
-
-                score = row["ensemble_score"]
-
-                all_rows.append({
-                    "sample_name": sample_name,
-                    "sequence": row["sequence"],
-                    "ensemble_score": score,
-                    "scores": row["scores"],
-                    "is_valid": row["is_valid"],
-                })
-
-                if score > best_score:
-                    best_score = score
-                    best_sequence = row["sequence"]
-
-        # -------------------------------------------------
-        # BUILD EXPERIMENT RESULT (FIXED)
-        # -------------------------------------------------
-        experiment = ExperimentResult(
-            sample_name="batch_run",
-            original_sequence=";".join(sequences.values()),
-            task_mode=self.config.task_mode,
-            best_sequence=best_sequence,
-            best_score=float(best_score),
-            optimization_history=all_rows,
-            interpretations=None,
-            metadata={
-                "config": self.config.__dict__
-            }
-        )
-
-        ExperimentExporter.export_json(
-            experiment,
-            self.config.output_path
-        )
+        print("[INFO] Pipeline finished successfully")
 
         return results
+
+    # -------------------------
+    # OUTPUT HANDLER
+    # -------------------------
+    def _save_results(self, results):
+
+        output_path = self.config.output_path
+
+        output_dir = os.path.dirname(output_path)
+
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        print(f"[INFO] Saving results to: {output_path}")
+
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2, default=str)

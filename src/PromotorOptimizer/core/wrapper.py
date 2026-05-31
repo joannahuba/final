@@ -1,11 +1,8 @@
 # core/wrappers.py
 
 
-from typing import Dict, List, Optional, Union, Any, Literal
-
-from ..validator import SequenceValidator
+from typing import Dict, List, Optional, Any, Literal
 from ..models.model_manager import ModelManager
-from ..pipeline.experiment_tracker import ExperimentTracker
 
 
 class SequencePredictorModelWrapper:
@@ -17,24 +14,18 @@ class SequencePredictorModelWrapper:
         sequences: List[str],
         model_manager: ModelManager,
         optimizers_list: List[Any],
-        interpreters_list: List[Any],
-        validation_config: Optional[Dict] = None,
+        interpreters_list: List[Any]
     ):
         """
         Initialization of all sequences to evaluate, mode in which we want to evaluate them
         Interpreters we want to use per each sequence and optimizers to use per each (sequence, interpreter)
         """
-
+        self.model_type = model_type
         self.mode = mode
         self.sequences = sequences
         self.model_manager = model_manager
         self.optimizers_list = optimizers_list
         self.interpreters_list = interpreters_list
-
-        # Centralized biological validation engine
-        self.validator = SequenceValidator(
-            validation_config
-        )
         self.output = dict() # {"Interpreter": {"Optimizer" {"seq": {["iteration", "sequence", "activity", "is_valid"]}}}"}
 
     # -------------------------------------------------
@@ -42,23 +33,46 @@ class SequencePredictorModelWrapper:
     # -------------------------------------------------
     def OptimizeSequences(self, config: Optional[Dict] = None):
         # STEP 1: iterate thought all sequences
-        for seq in self.sequences:
-            interpreter_dict = dict()
+        config = config or {}
+
+        for seq_id, seq in self.sequences.items():
+            print(len(seq))
+            print(seq)
+            interpreter_dict = {}
 
             # STEP 2: iterate through all interpreters
             for interpreter in self.interpreters_list:
-                optimizer_dict = dict()
-                interpretation = interpreter.explain(self.model_manager, seq)
+                
+                interpretation = interpreter.explain(
+                    model_manager=self.model_manager,
+                    sequence=seq,
+                    model_type=self.model_type
+                )
+
+                optimizer_dict = {}
                 
                 # STEP 3: iterate through all optimizers
                 for optimizer in self.optimizers_list:
-                    optimization = optimizer.optimize(decide what to put there)
-                    optimizer_dict[optimizer.__class__.__name__] = optimization
+                    result = optimizer.optimize(
+                        sequence=seq,
+                        model_manager=self.model_manager,
+                        interpretation=interpretation,
+                        config=config
+                    )
+
+                    optimizer_dict[
+                        optimizer.__class__.__name__
+                        ] = result
                 
-                interpreter_dict[interpreter.__class__.__name__] = {"interpretation": interpretation, 
-                                                     "optimizers_results": optimizer_dict}
+                interpreter_dict[
+                    interpreter.__class__.__name__
+                    ] = {
+                        "interpretation": interpretation, 
+                        "optimizers_results": optimizer_dict
+                    }
                 
             self.output[seq] = interpreter_dict
+        return self.output
 
     # -------------------------------------------------
     # RECONSTRUCTION
@@ -80,7 +94,7 @@ class SequencePredictorModelWrapper:
             "method": "reconstruction"
         })
 
-        return self.OptimizeSequence(
+        return self.OptimizeSequences(
             config=config
         )
 

@@ -6,7 +6,7 @@ import torch
 class BaseModelManager(ABC):
 
     @abstractmethod
-    def predict(self, sequence_tensor: torch.Tensor):
+    def predict_tensor(self, sequence_tensor: torch.Tensor):
         pass
 
     @abstractmethod

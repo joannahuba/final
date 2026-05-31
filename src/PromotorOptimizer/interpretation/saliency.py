@@ -1,49 +1,77 @@
-# interpretation/saliency.py
-
 import torch
+
 from .base import BaseInterpreter
+from ..core.types import InterpretationResult
+from ..utils.preprocessing import encode_one
 
 
 class SaliencyInterpreter(BaseInterpreter):
-    """
-    Gradient-based saliency:
-    importance = d score / d input
 
-    - signed_saliency: shows direction of influence
-        (positive = increases prediction, negative = decreases prediction)
-    - magnitude_saliency: absolute influence strength
-    """
+    def explain(
+        self,
+        model_manager,
+        sequence: str,
+        model_type="ensemble"
+    ):
 
-    def explain(self, model, sequence_tensor: torch.Tensor):
+        device = model_manager.get_device()
+        models = model_manager.get_models()
 
-        # Enable gradients on input
-        x = sequence_tensor.clone().detach().requires_grad_(True)
+        # (L, 4)
+        
+        x = torch.tensor(
+            encode_one(sequence),
+            dtype=torch.float32,
+            device=device
+        )
+        # print("Encoded shape:", x.shape)
 
-        model.zero_grad()
+        # (1, L, 4)
+        x = x.unsqueeze(0)
 
-        active, ratio = model(x)
+        saliency_maps = []
+        model_scores = {}
 
-        # Scalar objective for backprop
-        score = ratio.mean()
+        for name, meta in models.items():
 
-        score.backward()
+            model = meta["model"]
+            model.to(device)
+            model.eval()
 
-        # Gradient w.r.t input
-        grad = x.grad  # same shape as input
+            x_req = x.clone().detach().requires_grad_(True)
 
-        # Collapse embedding/features dimension if present
-        if grad.dim() > 1:
-            signed_saliency = grad.mean(dim=-1)
+            # print("Sequence length:", len(sequence))
+            # print("Input tensor shape:", x_req.shape)
+            active, ratio = model(x_req)
+
+            score = ratio.mean()
+
+            model_scores[name] = float(
+                score.detach().cpu()
+            )
+
+            model.zero_grad()
+
+            score.backward()
+
+            grad = x_req.grad
+
+            # (1, L, 4) -> (L,)
+            saliency = grad.abs().sum(dim=2).squeeze(0)
+
+            saliency_maps.append(saliency)
+
+        saliency_maps = torch.stack(saliency_maps)
+
+        if model_type == "ensemble":
+            importance = saliency_maps.mean(dim=0)
         else:
-            signed_saliency = grad
+            importance = saliency_maps[0]
 
-        # Keep sign (interpretability)
-        signed_saliency = signed_saliency.detach()
-
-        # Optional: magnitude-only importance
-        magnitude_saliency = signed_saliency.abs()
-
-        return {
-            "signed_saliency": signed_saliency,
-            "magnitude_saliency": magnitude_saliency
-        }
+        return InterpretationResult(
+            method_name="Saliency",
+            importance_scores=importance.detach().cpu(),
+            sequence=sequence,
+            model_scores=model_scores,
+            metadata={}
+        )

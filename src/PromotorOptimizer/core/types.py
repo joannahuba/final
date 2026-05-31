@@ -1,7 +1,8 @@
 # core/types.py
 
 from dataclasses import dataclass
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
+import torch
 
 @dataclass
 class CandidateSequence:
@@ -30,11 +31,13 @@ class InterpretationResult:
 
     method_name: str
 
-    importance_scores: any
+    importance_scores: torch.Tensor
 
-    model_name: Optional[str]
+    sequence: str
 
-    metadata: Optional[dict] = None
+    model_scores: Dict[str, float]
+
+    metadata: Dict[str, Any]
 
 
 @dataclass

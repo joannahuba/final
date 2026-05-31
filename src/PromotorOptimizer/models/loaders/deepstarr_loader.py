@@ -18,5 +18,7 @@ def load_deepstarr(checkpoint_path: str, device):
 
     model.to(device)
     model.eval()
-
+    # print("Loaded DeepSTARR")
+    # print("fc1.in_features =", model.fc1.in_features)
+    # print("_to_linear =", model._to_linear)
     return model

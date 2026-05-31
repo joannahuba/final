@@ -1,15 +1,18 @@
 # interpretation/base.py
 
 from abc import ABC, abstractmethod
-import torch
+from typing import Literal
+
+from ..core.types import InterpretationResult
 
 
 class BaseInterpreter(ABC):
-    """
-    All interpreters must return:
-        torch.Tensor [seq_len]
-    """
 
     @abstractmethod
-    def explain(self, model, sequence_tensor: torch.Tensor) -> torch.Tensor:
+    def explain(
+        self,
+        model_manager,
+        sequence: str,
+        model_type: Literal["single", "ensemble"] = "ensemble"
+    ) -> InterpretationResult:
         pass

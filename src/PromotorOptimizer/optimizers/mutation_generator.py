@@ -1,110 +1,110 @@
-# optimizers/mutation_generator.py
-
 import random
-from typing import List, Dict, Optional
+import numpy as np
+
+
+BASES = ["A", "C", "G", "T"]
 
 
 class MutationGenerator:
-    """
-    Generates DNA sequence mutations using:
-    - random exploration
-    - interpretation-guided mutation
-    - k-mer replacement (biological prior)
-    """
 
-    def __init__(self, alphabet: Optional[List[str]] = None, seed: int = 42):
-
-        # DNA alphabet default
-        self.alphabet = alphabet or ["A", "C", "G", "T"]
-        self.rng = random.Random(seed)
-
-    # -------------------------------------------------
-    # 1. RANDOM MUTATION
-    # -------------------------------------------------
-    def random_mutation(self, sequence: str) -> str:
-        """
-        Randomly mutates ONE position in the sequence.
-        """
-
-        if not sequence:
-            return sequence
+    @staticmethod
+    def mutate_position(
+        sequence,
+        position
+    ):
 
         seq = list(sequence)
 
-        idx = self.rng.randint(0, len(seq) - 1)
-        original = seq[idx]
+        current = seq[position]
 
-        choices = [b for b in self.alphabet if b != original]
-        seq[idx] = self.rng.choice(choices)
+        candidates = [
+            b for b in BASES
+            if b != current
+        ]
 
-        return "".join(seq)
-
-    # -------------------------------------------------
-    # 2. GUIDED MUTATION (INTERPRETATION-DRIVEN)
-    # -------------------------------------------------
-    def guided_mutation(
-        self,
-        sequence: str,
-        importance_scores,
-    ) -> str:
-        """
-        Uses saliency / integrated gradients:
-        - mutate HIGH importance positions
-        """
-
-        if not sequence:
-            return sequence
-
-        seq = list(sequence)
-
-        # convert tensor → list
-        scores = importance_scores.detach().cpu().numpy()
-
-        # pick top-k important positions
-        k = max(1, len(seq) // 10)
-
-        top_indices = sorted(
-            range(len(scores)),
-            key=lambda i: scores[i],
-            reverse=True
-        )[:k]
-
-        for idx in top_indices:
-
-            original = seq[idx]
-            choices = [b for b in self.alphabet if b != original]
-
-            if choices:
-                seq[idx] = self.rng.choice(choices)
+        seq[position] = random.choice(
+            candidates
+        )
 
         return "".join(seq)
 
-    # -------------------------------------------------
-    # 3. K-MER REPLACEMENT (BIOLOGICAL PRIOR)
-    # -------------------------------------------------
-    def kmer_replacement(
-        self,
-        sequence: str,
-        kmer_database: Dict[str, str]
-    ) -> str:
-        """
-        Replace subsequences using known good k-mers.
-
-        Example:
-        kmer_database = {
-            "ATG": "ATC",
-            "CGT": "GGT"
-        }
-        """
-
-        if not sequence or not kmer_database:
-            return sequence
+    @staticmethod
+    def random_mutation(
+        sequence,
+        n_mutations=1
+    ):
 
         seq = sequence
 
-        # simple greedy replacement
-        for kmer, replacement in kmer_database.items():
-            if kmer in seq:
-                seq = seq.replace(kmer, replacement)
+        positions = random.sample(
+            range(len(sequence)),
+            n_mutations
+        )
+
+        for pos in positions:
+            seq = MutationGenerator.mutate_position(
+                seq,
+                pos
+            )
+
+        return seq
+
+    @staticmethod
+    def guided_mutation(
+        sequence,
+        importance_scores,
+        n_mutations=1
+    ):
+
+        probs = (
+            importance_scores.numpy()
+            + 1e-8
+        )
+
+        probs /= probs.sum()
+
+        positions = np.random.choice(
+            len(sequence),
+            size=n_mutations,
+            replace=False,
+            p=probs
+        )
+
+        seq = sequence
+
+        for pos in positions:
+            seq = MutationGenerator.mutate_position(
+                seq,
+                int(pos)
+            )
+
+        return seq
+
+    @staticmethod
+    def hybrid_mutation(
+        sequence,
+        importance_scores,
+        n_mutations,
+        lambda_weight=0.7
+    ):
+
+        guided_n = int(
+            n_mutations * lambda_weight
+        )
+
+        random_n = (
+            n_mutations - guided_n
+        )
+
+        seq = MutationGenerator.guided_mutation(
+            sequence,
+            importance_scores,
+            guided_n
+        )
+
+        seq = MutationGenerator.random_mutation(
+            seq,
+            random_n
+        )
 
         return seq

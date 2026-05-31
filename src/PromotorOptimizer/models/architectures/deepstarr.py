@@ -41,6 +41,7 @@ class DeepSTARRLike(nn.Module):
         self.regressor = nn.Linear(256, 1)
 
     def _get_conv_output(self, seq_len):
+
         x = torch.zeros(1, 4, seq_len)
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
@@ -48,14 +49,25 @@ class DeepSTARRLike(nn.Module):
         self._to_linear = x.numel()
 
     def forward(self, x):
-        # x = x.permute(0, 2, 1)
+        print(x)
+        # print("INPUT:", x.shape)
+
+        x = x.permute(0, 2, 1)
+        # print("AFTER PERMUTE:", x.shape)
 
         x = self.pool(F.relu(self.conv1(x)))
+        # print("AFTER CONV1:", x.shape)
+
         x = self.pool(F.relu(self.conv2(x)))
+        # print("AFTER CONV2:", x.shape)
+
         x = self.pool(F.relu(self.conv3(x)))
+        # print("AFTER CONV3:", x.shape)
 
         x = x.view(x.size(0), -1)
+        # print("AFTER FLATTEN:", x.shape)
 
+        # print("FC1 EXPECTS:", self.fc1.in_features)
         x = self.dropout(F.relu(self.fc1(x)))
         x = self.dropout(F.relu(self.fc2(x)))
 

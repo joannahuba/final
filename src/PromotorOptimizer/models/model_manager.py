@@ -1,12 +1,10 @@
-import torch
-import pandas as pd
-import tempfile
-
-from torch.utils.data import DataLoader
 from typing import Dict, List, Any
 
+import numpy as np
+import torch
+
 from .base_model_manager import BaseModelManager
-from ..core.types import InterpretationResult
+from ..utils.preprocessing import encode_batch
 
 
 class ModelManager(BaseModelManager):
@@ -27,180 +25,193 @@ class ModelManager(BaseModelManager):
             else "cpu"
         )
 
-    # -------------------------------------------------
-    # 🔥 SINGLE SOURCE OF TRUTH FOR SHAPES
-    # -------------------------------------------------
-    def _fix_conv1d_shape(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Ensures model input is always (B, 4, L)
-        Accepts:
-        - (B, L, 4) -> permute
-        - (B, 4, L) -> ok
-        """
-        if x.dim() == 3 and x.shape[-1] == 4:
-            x = x.permute(0, 2, 1)
-        return x
+    # =====================================================
+    # HELPERS
+    # =====================================================
 
-    # -------------------------------------------------
-    # SINGLE TENSOR PREDICTION
-    # -------------------------------------------------
-    def predict(self, sequence_tensor: torch.Tensor):
+    def get_models(self):
+        return self.models_dict
+
+    def get_device(self):
+        return self.device
+
+    def get_model_names(self):
+        return list(self.models_dict.keys())
+
+    # =====================================================
+    # TENSOR PREDICTION
+    # =====================================================
+
+    def predict_tensor(
+        self,
+        tensor: torch.Tensor
+    ):
 
         outputs = {}
+
+        tensor = tensor.to(self.device)
 
         for name, meta in self.models_dict.items():
 
             model = meta["model"]
+
             model.to(self.device)
             model.eval()
 
             with torch.no_grad():
 
-                x = sequence_tensor.to(self.device)
-                x = self._fix_conv1d_shape(x)
-
-                active, ratio = model(x)
+                active, ratio = model(tensor)
 
             outputs[name] = {
                 "active": active.detach().cpu(),
-                "ratio": ratio.detach().cpu(),
+                "ratio": ratio.detach().cpu()
             }
 
         return outputs
 
-    # -------------------------------------------------
-    # BATCH STRING PREDICTION
-    # -------------------------------------------------
-    def predict_sequences(self, sequences: List[str]):
+    # =====================================================
+    # RAW STRING PREDICTION
+    # =====================================================
 
-        compiled_scores = {seq: {} for seq in sequences}
+    def predict_sequences(
+        self,
+        sequences: List[str]
+    ):
 
-        with tempfile.NamedTemporaryFile(
-            mode="w+",
-            suffix=".tsv",
-            delete=True
-        ) as tmp_file:
+        X = encode_batch(sequences)
 
-            df = pd.DataFrame({
-                "id": [f"seq_{i}" for i in range(len(sequences))],
-                "sequence": sequences
-            })
+        X = torch.tensor(
+            X,
+            dtype=torch.float32,
+            device=self.device
+        )
 
-            df.to_csv(tmp_file.name, sep="\t", index=False)
-            tmp_file.flush()
-
-            for model_name, meta in self.models_dict.items():
-
-                model = meta["model"]
-                dataset_class = meta["dataset_class"]
-
-                model.to(self.device)
-                model.eval()
-
-                dataset = dataset_class(
-                    filepath=tmp_file.name,
-                    is_test=True
-                )
-
-                loader = DataLoader(
-                    dataset,
-                    batch_size=self.batch_size,
-                    shuffle=False
-                )
-
-                offset = 0
-
-                with torch.no_grad():
-
-                    for _, x in loader:
-
-                        x = x.to(self.device)
-                        x = self._fix_conv1d_shape(x)
-
-                        active, ratio = model(x)
-
-                        ratio = ratio.detach().cpu().numpy().flatten()
-
-                        for i, score in enumerate(ratio):
-                            seq = sequences[offset + i]
-                            compiled_scores[seq][model_name] = float(score)
-
-                        offset += len(ratio)
-
-        return compiled_scores
-
-    # -------------------------------------------------
-    # ENSEMBLE
-    # -------------------------------------------------
-    def ensemble_predict(self, sequence_tensor: torch.Tensor):
-
-        outputs = self.predict(sequence_tensor)
-
-        scores = [
-            out["ratio"].mean().item()
-            for out in outputs.values()
-        ]
-
-        scores = torch.tensor(scores)
-
-        return {
-            "mean": float(scores.mean()),
-            "min": float(scores.min()),
-            "max": float(scores.max()),
-            "std": float(scores.std() if len(scores) > 1 else 0.0),
+        results = {
+            seq: {}
+            for seq in sequences
         }
 
-    # -------------------------------------------------
-    # INTERPRETATION
-    # -------------------------------------------------
-    def explain(self, sequence_tensor, interpreter):
-
-        results = {}
-
-        for name, meta in self.models_dict.items():
+        for model_name, meta in self.models_dict.items():
 
             model = meta["model"]
+
             model.to(self.device)
             model.eval()
 
-            importance = interpreter.explain(
-                model,
-                self._fix_conv1d_shape(sequence_tensor.to(self.device))
+            with torch.no_grad():
+
+                active, ratio = model(X)
+
+            ratio = (
+                ratio
+                .detach()
+                .cpu()
+                .numpy()
+                .flatten()
             )
 
-            results[name] = InterpretationResult(
-                method_name=interpreter.__class__.__name__,
-                importance_scores=importance.detach().cpu(),
-                model_name=name,
-                metadata={}
-            )
+            for idx, seq in enumerate(sequences):
+
+                results[seq][model_name] = float(
+                    ratio[idx]
+                )
 
         return results
 
-    # -------------------------------------------------
-    # ENSEMBLE INTERPRETATION
-    # -------------------------------------------------
-    def explain_ensemble(self, sequence_tensor, interpreter):
+    # =====================================================
+    # SINGLE SEQUENCE SCORE
+    # =====================================================
 
-        maps = []
+    def score_sequence(
+        self,
+        sequence: str,
+        penalty_std: float = 0.2
+    ):
 
-        for meta in self.models_dict.values():
+        scores = self.predict_sequences(
+            [sequence]
+        )[sequence]
 
-            model = meta["model"]
-            model.to(self.device)
-            model.eval()
+        scores = np.array(
+            list(scores.values())
+        )
 
-            importance = interpreter.explain(
-                model,
-                self._fix_conv1d_shape(sequence_tensor.to(self.device))
-            )
-
-            maps.append(importance.unsqueeze(0))
-
-        maps = torch.cat(maps, dim=0)
+        mean = scores.mean()
+        std = scores.std()
 
         return {
-            "mean": maps.mean(dim=0),
-            "std": maps.std(dim=0),
-            "raw": maps
+            "mean": float(mean),
+            "std": float(std),
+            "fitness": float(
+                mean -
+                penalty_std * std
+            )
+        }
+
+    # =====================================================
+    # MULTI SEQUENCE SCORE
+    # =====================================================
+
+    def score_sequences(
+        self,
+        sequences: List[str],
+        penalty_std: float = 0.2
+    ):
+
+        raw = self.predict_sequences(
+            sequences
+        )
+
+        output = {}
+
+        for seq, model_scores in raw.items():
+
+            scores = np.array(
+                list(model_scores.values())
+            )
+
+            mean = scores.mean()
+            std = scores.std()
+
+            output[seq] = {
+                "mean": float(mean),
+                "std": float(std),
+                "fitness": float(
+                    mean -
+                    penalty_std * std
+                )
+            }
+
+        return output
+
+    # =====================================================
+    # ENSEMBLE STATS FROM TENSOR
+    # =====================================================
+
+    def ensemble_predict(
+        self,
+        tensor: torch.Tensor
+    ):
+
+        outputs = self.predict_tensor(
+            tensor
+        )
+
+        scores = []
+
+        for result in outputs.values():
+
+            scores.append(
+                result["ratio"]
+                .mean()
+                .item()
+            )
+
+        scores = np.array(scores)
+
+        return {
+            "mean": float(scores.mean()),
+            "std": float(scores.std()),
+            "min": float(scores.min()),
+            "max": float(scores.max())
         }

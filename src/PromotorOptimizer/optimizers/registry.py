@@ -1,6 +1,6 @@
 # optimizers/registry.py
 
-from .random_mutation_optimizer import RandomMutationOptimizer
+from .beam_search import BeamSearchOptimizer
 
 
 class OptimizerRegistry:
@@ -12,8 +12,8 @@ class OptimizerRegistry:
 
         for name in names:
 
-            if name == "mutation":
-                registry.append(RandomMutationOptimizer())
+            if name == "beam_search":
+                registry.append(BeamSearchOptimizer())
 
             else:
                 raise ValueError(f"Unknown optimizer {name}")
